@@ -1,0 +1,13 @@
+{
+  "name": "Пульт тифлокомментария",
+  "short_name": "Пульт",
+  "description": "Второй экран для тифлокомментария: фильм на планшете, комментарий на телефоне.",
+  "lang": "ru",
+  "dir": "ltr",
+  "start_url": "./index.html",
+  "scope": "./",
+  "display": "standalone",
+  "orientation": "portrait",
+  "background_color": "#0d0f12",
+  "theme_color": "#0d0f12"
+}
