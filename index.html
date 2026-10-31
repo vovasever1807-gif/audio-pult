@@ -147,6 +147,13 @@
     <span class="big" id="listenLabel">Слушать фильм</span>
     <span class="sub" id="listenSub">найду начало сам</span>
   </button>
+
+  <div style="display:flex;gap:8px;margin-top:10px">
+    <button id="back5" type="button" aria-label="Сдвинуть комментарий назад на пять секунд" style="flex:1;min-height:64px">−5 с</button>
+    <button id="back1" type="button" aria-label="Сдвинуть комментарий назад на секунду" style="flex:1;min-height:64px">−1 с</button>
+    <button id="fwd1" type="button" aria-label="Сдвинуть комментарий вперёд на секунду" style="flex:1;min-height:64px">+1 с</button>
+    <button id="fwd5" type="button" aria-label="Сдвинуть комментарий вперёд на пять секунд" style="flex:1;min-height:64px">+5 с</button>
+  </div>
 </main>
 
 <div id="live" aria-live="polite" role="status"></div>
@@ -359,6 +366,7 @@
       mic.buf = new Float32Array(mic.analyser.fftSize);
       mic.on = true; mic.armed = true; mic.paused = false;
       mic.onsets = []; mic.lv = []; mic.loud = false;
+      mic.hist = []; mic.si = 0; mic.offset = 0;
       mic.quietMs = 0; mic.loudMs = 0; mic.lastFix = Date.now();
       mic.startedAt = Date.now();
       mic.ref = null;
@@ -387,33 +395,47 @@
     say('Слушание выключено');
   }
 
-  function tryFix() {
-    var now = Date.now();
-    var recent = mic.onsets.filter(function (o) { return now - o.at < 45000; });
-    if (recent.length < 4) return;
-    var bins = {};
-    recent.forEach(function (l) {
-      mic.ref.onsets.forEach(function (r) {
-        var d = r - l.t;
-        if (Math.abs(d) > 1200) return;
-        var k = Math.round(d * 2) / 2;
-        (bins[k] = bins[k] || []).push(d);
-      });
-    });
-    var best = null;
-    Object.keys(bins).forEach(function (k) {
-      if (!best || bins[k].length > best.v.length) best = { v: bins[k] };
-    });
-    if (!best || best.v.length < 4) return;
-    var sorted = best.v.slice().sort(function (a, b) { return a - b; });
-    var med = sorted[sorted.length >> 1];
-    mic.lastFix = now;
-    if (Math.abs(med) < 0.9) return;
-    var d = audio.duration || 1e9;
-    audio.currentTime = Math.max(0, Math.min(d, audio.currentTime + med));
-    state.textContent = 'Подтянул на ' + Math.round(Math.abs(med)) + ' с';
-    say('Подтянул на ' + Math.round(Math.abs(med)) + ' секунд');
+  // Сверяем ритм речи в комнате с картой речи из субтитров: ищем сдвиг,
+  // при котором совпадений «речь/тишина» больше всего.
+  function alignBySpeech() {
+    var ref = mic.ref && mic.ref.speech;
+    if (!ref) return;
+    var hist = mic.hist.filter(function (h) { return h.ct > audio.currentTime - 45; });
+    if (hist.length < 40) return;
+    var ones = 0;
+    hist.forEach(function (h) { ones += h.bit; });
+    if (ones < 8) return;
+
+    var STEP = 0.5, all = [];
+    for (var d = -150; d <= 150; d += 0.5) {
+      var score = 0, n = 0;
+      for (var i = 0; i < hist.length; i++) {
+        var k = Math.round((hist[i].ct + d) / STEP);
+        if (k < 0 || k >= ref.length) continue;
+        var r = ref.charCodeAt(k) === 49 ? 1 : 0;
+        n++;
+        if (r === 1 && hist[i].bit === 1) score += 3;
+        else if (r === 0 && hist[i].bit === 0) score += 1;
+      }
+      if (n >= 30) all.push({ d: d, score: score });
+    }
+    if (!all.length) return;
+    all.sort(function (a, b) { return b.score - a.score; });
+    var best = all[0], alt = 0;
+    for (var j = 1; j < all.length; j++) {
+      if (Math.abs(all[j].d - best.d) > 3) { alt = all[j].score; break; }
+    }
+    if (alt && best.score < alt * 1.1) return;
+    mic.offset = best.d;
+    mic.lastFix = Date.now();
+    if (Math.abs(best.d) < 0.7) return;
+    var dur = audio.duration || 1e9;
+    audio.currentTime = Math.max(0, Math.min(dur - 1, audio.currentTime + best.d));
+    clearHist();
+    state.textContent = 'Сдвиг ' + (best.d > 0 ? '+' : '−') + Math.abs(Math.round(best.d)) + ' с';
   }
+
+  function clearHist() { mic.hist = []; }
 
   function tickLoop() {
     if (!mic.on) return;
@@ -444,25 +466,24 @@
       try { audio.currentTime = 0; } catch (e) {}
       audio.play().then(function () {
         mic.lastFix = Date.now();
-        state.textContent = 'Синхронизировано';
+        clearHist();
+        state.textContent = 'Поймал начало, слушаю';
         say('Поймал начало, поехали');
       }).catch(function () {});
     }
 
-    if (!audio.paused && !mic.armed && mic.quietMs > 5000 && rms < 0.004) {
-      audio.pause();
-      mic.paused = true;
-      state.textContent = 'Фильм встал, жду';
-    }
-    if (mic.paused && loud && mic.loudMs >= 400) {
-      mic.paused = false;
-      mic.lastFix = Date.now();
-      audio.play().catch(function () {});
-      state.textContent = 'Продолжаю';
+    // каждые полсекунды — снимок: идёт ли речь в комнате и где стоит дорожка
+    mic.si += 100;
+    if (mic.si >= 500) {
+      mic.si = 0;
+      if (!audio.paused && !audio.ended) {
+        mic.hist.push({ ct: audio.currentTime, bit: loud ? 1 : 0 });
+        if (mic.hist.length > 240) mic.hist.shift();
+      }
     }
 
-    if (mic.ref && !audio.paused && mic.onsets.length >= 4 && Date.now() - mic.lastFix > 8000) {
-      tryFix();
+    if (mic.ref && !audio.paused && mic.hist.length >= 60 && Date.now() - mic.lastFix > 20000) {
+      alignBySpeech();
     }
 
     setTimeout(tickLoop, 100);
@@ -491,8 +512,22 @@
   var mic = {
     on: false, ctx: null, analyser: null, buf: null, stream: null, ref: null, ep: null,
     loud: false, quietMs: 0, loudMs: 0, onsets: [], lastFix: 0, armed: false, paused: false,
-    lv: [], startedAt: 0
+    lv: [], startedAt: 0, hist: [], si: 0, offset: 0
   };
+
+  function nudge(d) {
+    var dur = audio.duration || 1e9;
+    audio.currentTime = Math.max(0, Math.min(dur - 1, audio.currentTime + d));
+    clearHist();
+    mic.lastFix = Date.now() + 8000;
+    state.textContent = 'Сдвиг вручную ' + (d > 0 ? '+' : '−') + Math.abs(d) + ' с';
+    say((d > 0 ? 'Вперёд' : 'Назад') + ' на ' + Math.abs(d) + ' секунд');
+  }
+
+  ['back5', 'back1', 'fwd1', 'fwd5'].forEach(function (id) {
+    var d = { back5: -5, back1: -1, fwd1: 1, fwd5: 5 }[id];
+    document.getElementById(id).addEventListener('click', function () { nudge(d); });
+  });
 
   loadBlob().then(function (rec) {
     if (!rec) return;
