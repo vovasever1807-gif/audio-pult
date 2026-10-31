@@ -1,0 +1,546 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Пульт тифлокомментария</title>
+<meta name="theme-color" content="#0d0f12">
+<link rel="manifest" href="manifest.json">
+<style>
+  :root {
+    --bg: #0d0f12;
+    --fg: #f2f4f7;
+    --dim: #9aa3ad;
+    --accent: #ffd166;
+    --btn: #1c2026;
+    --btn-active: #2b323b;
+    --danger: #ff6b6b;
+  }
+  * { box-sizing: border-box; }
+  html, body {
+    margin: 0; padding: 0;
+    background: var(--bg); color: var(--fg);
+    font-family: -apple-system, "Segoe UI", Roboto, "Noto Sans", sans-serif;
+    -webkit-text-size-adjust: 100%;
+  }
+  body {
+    min-height: 100vh;
+    padding: 12px 12px calc(12px + env(safe-area-inset-bottom));
+    display: flex; flex-direction: column; gap: 12px;
+  }
+  header { text-align: center; padding: 4px 0 0; }
+  h1 { font-size: 20px; margin: 0 0 4px; font-weight: 600; }
+  #clock {
+    font-size: 40px; font-variant-numeric: tabular-nums;
+    letter-spacing: 1px; line-height: 1.15; color: var(--accent);
+  }
+  #state { font-size: 16px; color: var(--dim); min-height: 22px; }
+  .zoom { font-size: 28px; font-variant-numeric: tabular-nums; }
+
+  button {
+    font: inherit; color: var(--fg);
+    background: var(--btn);
+    border: 2px solid #333b45;
+    border-radius: 16px;
+    min-height: 84px;
+    padding: 10px;
+    display: flex; flex-direction: column;
+    align-items: center; justify-content: center; gap: 4px;
+    cursor: pointer;
+    touch-action: manipulation;
+    -webkit-tap-highlight-color: transparent;
+  }
+  button:active, button.pressed { background: var(--btn-active); border-color: var(--accent); }
+  button:focus-visible { outline: 3px solid var(--accent); outline-offset: 2px; }
+  button[disabled] { opacity: .45; }
+  .big { font-size: 22px; font-weight: 600; }
+  .sym { font-size: 30px; line-height: 1; }
+  .sub { font-size: 13px; color: var(--dim); }
+
+  .row { display: grid; gap: 12px; grid-template-columns: 1fr 1fr; }
+  .row.three { grid-template-columns: 1fr 1fr 1fr; }
+  .primary { min-height: 132px; border-color: var(--accent); }
+
+  #loadBox {
+    border: 2px dashed #333b45; border-radius: 16px;
+    padding: 16px; text-align: center;
+  }
+  #loadBox p { margin: 0 0 12px; color: var(--dim); font-size: 15px; }
+  #pick { min-height: 64px; width: 100%; }
+  #fileName { font-size: 14px; color: var(--dim); margin-top: 8px; word-break: break-all; }
+
+  #live {
+    position: absolute; width: 1px; height: 1px;
+    overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap;
+  }
+  .hidden { display: none !important; }
+</style>
+</head>
+<body>
+
+<header>
+  <h1>Пульт тифлокомментария</h1>
+  <div id="clock" role="timer" aria-live="off">00:00:00</div>
+  <div id="state">Дорожка не загружена</div>
+</header>
+
+<div id="loadBox">
+  <p>Выбери файл дорожки. Он сохранится в телефоне и больше не понадобится.</p>
+  <button id="pick" type="button">
+    <span class="big">Выбрать аудиофайл</span>
+    <span class="sub">mp3 из загрузок</span>
+  </button>
+  <div id="fileName"></div>
+  <input id="file" type="file" accept="audio/*" class="hidden">
+</div>
+
+<main id="controls" class="hidden">
+  <button id="play" class="primary" type="button" aria-label="Пуск">
+    <span class="sym" id="playSym">▶</span>
+    <span class="big" id="playLabel">Пуск</span>
+  </button>
+
+  <div class="row three" style="margin-top:12px">
+    <button id="back10" type="button" aria-label="Назад десять секунд">
+      <span class="sym">−10</span><span class="sub">секунд</span>
+    </button>
+    <button id="back1" type="button" aria-label="Назад одна секунда">
+      <span class="sym">−1</span><span class="sub">секунда</span>
+    </button>
+    <button id="fwd1" type="button" aria-label="Вперёд одна секунда">
+      <span class="sym">+1</span><span class="sub">секунда</span>
+    </button>
+  </div>
+
+  <div class="row" style="margin-top:12px">
+    <button id="fwd10" type="button" aria-label="Вперёд десять секунд">
+      <span class="sym">+10</span><span class="sub">секунд</span>
+    </button>
+    <button id="home" type="button" aria-label="Вернуться в начало">
+      <span class="sym">⏮</span><span class="sub">в начало</span>
+    </button>
+  </div>
+
+  <div class="row" style="margin-top:12px">
+    <button id="where" type="button" aria-label="Сказать, где сейчас дорожка">
+      <span class="big">Где я</span>
+      <span class="sub">время вслух</span>
+    </button>
+    <button id="resync" type="button" aria-label="Подстройка: пауза и сдвиг">
+      <span class="big">Подстройка</span>
+      <span class="sub">пауза, потом ±1</span>
+    </button>
+  </div>
+
+  <div class="row" style="margin-top:12px">
+    <button id="slower" type="button" aria-label="Сменить дорожку">
+      <span class="big">Другая дорожка</span>
+      <span class="sub">выбрать файл</span>
+    </button>
+    <button id="beep" type="button" aria-label="Проверить звук">
+      <span class="big">Проверка звука</span>
+      <span class="sub">три коротких сигнала</span>
+    </button>
+  </div>
+
+  <button id="listen" class="primary" style="margin-top:12px;width:100%;min-height:110px" type="button" aria-pressed="false">
+    <span class="big" id="listenLabel">Слушать фильм</span>
+    <span class="sub" id="listenSub">найду начало сам</span>
+  </button>
+
+  <div style="display:flex;gap:8px;margin-top:10px">
+    <button id="back5" type="button" aria-label="Сдвинуть комментарий назад на пять секунд" style="flex:1;min-height:64px">−5 с</button>
+    <button id="back1" type="button" aria-label="Сдвинуть комментарий назад на секунду" style="flex:1;min-height:64px">−1 с</button>
+    <button id="fwd1" type="button" aria-label="Сдвинуть комментарий вперёд на секунду" style="flex:1;min-height:64px">+1 с</button>
+    <button id="fwd5" type="button" aria-label="Сдвинуть комментарий вперёд на пять секунд" style="flex:1;min-height:64px">+5 с</button>
+  </div>
+</main>
+
+<div id="live" aria-live="polite" role="status"></div>
+<audio id="audio" preload="auto"></audio>
+
+<script>
+(function () {
+  'use strict';
+
+  var audio = document.getElementById('audio');
+  var clock = document.getElementById('clock');
+  var state = document.getElementById('state');
+  var live = document.getElementById('live');
+  var fileInput = document.getElementById('file');
+  var controls = document.getElementById('controls');
+  var loadBox = document.getElementById('loadBox');
+  var fileName = document.getElementById('fileName');
+  var playSym = document.getElementById('playSym');
+  var playLabel = document.getElementById('playLabel');
+
+  var DB_NAME = 'pult-ad', STORE = 'files', KEY = 'track';
+  var lastAnnounce = 0;
+
+  function openDB() {
+    return new Promise(function (resolve, reject) {
+      var r = indexedDB.open(DB_NAME, 1);
+      r.onupgradeneeded = function () { r.result.createObjectStore(STORE); };
+      r.onsuccess = function () { resolve(r.result); };
+      r.onerror = function () { reject(r.error); };
+    });
+  }
+
+  function saveBlob(blob) {
+    return openDB().then(function (db) {
+      return new Promise(function (resolve, reject) {
+        var tx = db.transaction(STORE, 'readwrite');
+        tx.objectStore(STORE).put(blob, KEY);
+        tx.oncomplete = resolve;
+        tx.onerror = function () { reject(tx.error); };
+      });
+    });
+  }
+
+  function loadBlob() {
+    return openDB().then(function (db) {
+      return new Promise(function (resolve, reject) {
+        var tx = db.transaction(STORE, 'readonly');
+        var req = tx.objectStore(STORE).get(KEY);
+        req.onsuccess = function () { resolve(req.result || null); };
+        req.onerror = function () { reject(req.error); };
+      });
+    });
+  }
+
+  function fmt(s) {
+    s = Math.max(0, Math.floor(s || 0));
+    var h = Math.floor(s / 3600), m = Math.floor((s % 3600) / 60), x = s % 60;
+    return (h < 10 ? '0' : '') + h + ':' + (m < 10 ? '0' : '') + m + ':' + (x < 10 ? '0' : '') + x;
+  }
+
+  function say(text) {
+    live.textContent = '';
+    setTimeout(function () { live.textContent = text; }, 60);
+  }
+
+  function tick() {
+    clock.textContent = fmt(audio.currentTime);
+  }
+
+  function attach(src) {
+    audio.src = src;
+    controls.classList.remove('hidden');
+    loadBox.classList.add('hidden');
+    state.textContent = 'Дорожка готова';
+    tick();
+  }
+
+  function useFile(file) {
+    var url = URL.createObjectURL(file);
+    attach(url);
+    fileName.textContent = file.name || '';
+    mic.ep = epFromName(file.name);
+    mic.ref = null;
+    saveBlob({ blob: file, name: file.name || '' }).catch(function () { /* не страшно: файл играет и так */ });
+    say('Дорожка загружена');
+  }
+
+  document.getElementById('pick').addEventListener('click', function () {
+    fileInput.click();
+  });
+  document.getElementById('slower').addEventListener('click', function () {
+    fileInput.click();
+  });
+  fileInput.addEventListener('change', function () {
+    if (fileInput.files && fileInput.files[0]) useFile(fileInput.files[0]);
+  });
+
+  function setPlaying(isPlaying) {
+    playSym.textContent = isPlaying ? '❚❚' : '▶';
+    playLabel.textContent = isPlaying ? 'Пауза' : 'Пуск';
+    document.getElementById('play').setAttribute('aria-label', isPlaying ? 'Пауза' : 'Пуск');
+    state.textContent = isPlaying ? 'Идёт' : 'Пауза';
+  }
+
+  document.getElementById('play').addEventListener('click', function () {
+    if (audio.paused) {
+      audio.play().catch(function () { say('Не удалось запустить звук'); });
+    } else {
+      audio.pause();
+    }
+  });
+
+  audio.addEventListener('play', function () { setPlaying(true); });
+  audio.addEventListener('pause', function () { setPlaying(false); });
+  audio.addEventListener('timeupdate', tick);
+  audio.addEventListener('ended', function () { setPlaying(false); state.textContent = 'Дорожка закончилась'; });
+  audio.addEventListener('error', function () { state.textContent = 'Ошибка файла'; });
+
+  function nudge(delta) {
+    var wasPlaying = !audio.paused;
+    audio.currentTime = Math.max(0, Math.min((audio.duration || 1e9), audio.currentTime + delta));
+    tick();
+    say((delta > 0 ? 'Плюс ' : 'Минус ') + Math.abs(delta) + ' секунд, ' + fmt(audio.currentTime));
+    if (wasPlaying) audio.play().catch(function () {});
+  }
+
+  document.getElementById('back1').addEventListener('click', function () { nudge(-1); });
+  document.getElementById('fwd1').addEventListener('click', function () { nudge(1); });
+  document.getElementById('back10').addEventListener('click', function () { nudge(-10); });
+  document.getElementById('fwd10').addEventListener('click', function () { nudge(10); });
+
+  document.getElementById('home').addEventListener('click', function () {
+    audio.pause();
+    audio.currentTime = 0;
+    tick();
+    say('В начало');
+  });
+
+  document.getElementById('where').addEventListener('click', function () {
+    var now = audio.currentTime;
+    var m = Math.floor(now / 60), s = Math.floor(now % 60);
+    say('Сейчас ' + m + ' минут ' + s + ' секунд');
+    tick();
+  });
+
+  document.getElementById('resync').addEventListener('click', function () {
+    audio.pause();
+    say('Пауза. Подстраивай кнопками минус и плюс, потом пуск');
+  });
+
+  document.getElementById('beep').addEventListener('click', function () {
+    var ctx = new (window.AudioContext || window.webkitAudioContext)();
+    [0, 0.45, 0.9].forEach(function (t) {
+      var o = ctx.createOscillator(), g = ctx.createGain();
+      o.frequency.value = 880;
+      g.gain.setValueAtTime(0.0001, ctx.currentTime + t);
+      g.gain.exponentialRampToValueAtTime(0.25, ctx.currentTime + t + 0.02);
+      g.gain.exponentialRampToValueAtTime(0.0001, ctx.currentTime + t + 0.3);
+      o.connect(g); g.connect(ctx.destination);
+      o.start(ctx.currentTime + t); o.stop(ctx.currentTime + t + 0.32);
+    });
+    say('Три сигнала');
+  });
+
+  // Клавиатура для тех, кто пользуется внешней клавиатурой
+  document.addEventListener('keydown', function (e) {
+    if (e.target.tagName === 'INPUT') return;
+    if (e.code === 'Space') { e.preventDefault(); document.getElementById('play').click(); }
+    if (e.code === 'ArrowLeft') { e.preventDefault(); nudge(e.shiftKey ? -10 : -1); }
+    if (e.code === 'ArrowRight') { e.preventDefault(); nudge(e.shiftKey ? 10 : 1); }
+  });
+
+  // ---- Слушание фильма: автостарт и подгонка по ритму речи ----
+
+  function epFromName(name) {
+    var m = /s(\d{1,2})e(\d{1,2})/i.exec(name || '');
+    return m ? ('s' + ('0' + m[1]).slice(-2) + 'e' + ('0' + m[2]).slice(-2)) : null;
+  }
+
+  function pct(arr, p) {
+    if (!arr.length) return 0;
+    var a = arr.slice().sort(function (x, y) { return x - y; });
+    return a[Math.min(a.length - 1, Math.floor(a.length * p))];
+  }
+
+  function loadRef() {
+    if (mic.ref || !mic.ep) return;
+    fetch('timing/' + mic.ep + '.json', { cache: 'no-cache' })
+      .then(function (r) { return r.ok ? r.json() : null; })
+      .then(function (j) { if (j && j.onsets) mic.ref = j; })
+      .catch(function () {});
+  }
+
+  function startListen() {
+    if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
+      state.textContent = 'Микрофон недоступен';
+      say('Микрофон недоступен');
+      return;
+    }
+    navigator.mediaDevices.getUserMedia({
+      audio: { echoCancellation: true, noiseSuppression: false, autoGainControl: true }
+    }).then(function (stream) {
+      mic.stream = stream;
+      var Ctx = window.AudioContext || window.webkitAudioContext;
+      mic.ctx = new Ctx();
+      var src = mic.ctx.createMediaStreamSource(stream);
+      mic.analyser = mic.ctx.createAnalyser();
+      mic.analyser.fftSize = 2048;
+      src.connect(mic.analyser);
+      mic.buf = new Float32Array(mic.analyser.fftSize);
+      mic.on = true; mic.armed = true; mic.paused = false;
+      mic.onsets = []; mic.lv = []; mic.loud = false;
+      mic.hist = []; mic.si = 0; mic.offset = 0;
+      mic.quietMs = 0; mic.loudMs = 0; mic.lastFix = Date.now();
+      mic.startedAt = Date.now();
+      mic.ref = null;
+      document.getElementById('listen').setAttribute('aria-pressed', 'true');
+      document.getElementById('listenLabel').textContent = 'Слушаю';
+      document.getElementById('listenSub').textContent = 'включи фильм';
+      state.textContent = 'Слушаю планшет';
+      loadRef();
+      say('Слушаю. Включай фильм.');
+      tickLoop();
+    }).catch(function () {
+      state.textContent = 'Нет доступа к микрофону';
+      say('Нет доступа к микрофону');
+    });
+  }
+
+  function stopListen() {
+    mic.on = false; mic.armed = false; mic.paused = false;
+    if (mic.stream) mic.stream.getTracks().forEach(function (t) { t.stop(); });
+    if (mic.ctx) { try { mic.ctx.close(); } catch (e) {} }
+    mic.stream = null; mic.ctx = null; mic.analyser = null;
+    document.getElementById('listen').setAttribute('aria-pressed', 'false');
+    document.getElementById('listenLabel').textContent = 'Слушать фильм';
+    document.getElementById('listenSub').textContent = 'найду начало сам';
+    state.textContent = 'Слушание выключено';
+    say('Слушание выключено');
+  }
+
+  // Сверяем ритм речи в комнате с картой речи из субтитров: ищем сдвиг,
+  // при котором совпадений «речь/тишина» больше всего.
+  function alignBySpeech() {
+    var ref = mic.ref && mic.ref.speech;
+    if (!ref) return;
+    var hist = mic.hist.filter(function (h) { return h.ct > audio.currentTime - 45; });
+    if (hist.length < 40) return;
+    var ones = 0;
+    hist.forEach(function (h) { ones += h.bit; });
+    if (ones < 8) return;
+
+    var STEP = 0.5, all = [];
+    for (var d = -150; d <= 150; d += 0.5) {
+      var score = 0, n = 0;
+      for (var i = 0; i < hist.length; i++) {
+        var k = Math.round((hist[i].ct + d) / STEP);
+        if (k < 0 || k >= ref.length) continue;
+        var r = ref.charCodeAt(k) === 49 ? 1 : 0;
+        n++;
+        if (r === 1 && hist[i].bit === 1) score += 3;
+        else if (r === 0 && hist[i].bit === 0) score += 1;
+      }
+      if (n >= 30) all.push({ d: d, score: score });
+    }
+    if (!all.length) return;
+    all.sort(function (a, b) { return b.score - a.score; });
+    var best = all[0], alt = 0;
+    for (var j = 1; j < all.length; j++) {
+      if (Math.abs(all[j].d - best.d) > 3) { alt = all[j].score; break; }
+    }
+    if (alt && best.score < alt * 1.1) return;
+    mic.offset = best.d;
+    mic.lastFix = Date.now();
+    if (Math.abs(best.d) < 0.7) return;
+    var dur = audio.duration || 1e9;
+    audio.currentTime = Math.max(0, Math.min(dur - 1, audio.currentTime + best.d));
+    clearHist();
+    state.textContent = 'Сдвиг ' + (best.d > 0 ? '+' : '−') + Math.abs(Math.round(best.d)) + ' с';
+  }
+
+  function clearHist() { mic.hist = []; }
+
+  function tickLoop() {
+    if (!mic.on) return;
+    mic.analyser.getFloatTimeDomainData(mic.buf);
+    var sum = 0, i;
+    for (i = 0; i < mic.buf.length; i++) { sum += mic.buf[i] * mic.buf[i]; }
+    var rms = Math.sqrt(sum / mic.buf.length);
+    mic.lv.push(rms);
+    if (mic.lv.length > 200) mic.lv.shift();
+    var thr = Math.max(0.004, Math.min(0.05, pct(mic.lv, 0.2) * 3 + 0.003));
+    var loud = rms > thr;
+
+    if (loud) {
+      if (!mic.loud && mic.quietMs >= 350 && mic.lv.length > 20) {
+        mic.onsets.push({ t: audio.currentTime, at: Date.now() });
+        if (mic.onsets.length > 24) mic.onsets.shift();
+      }
+      mic.loudMs += 100;
+      mic.quietMs = 0;
+    } else {
+      mic.quietMs += 100;
+      mic.loudMs = 0;
+    }
+    mic.loud = loud;
+
+    if (mic.armed && loud && mic.loudMs >= 700 && audio.paused && Date.now() - mic.startedAt < 300000) {
+      mic.armed = false;
+      try { audio.currentTime = 0; } catch (e) {}
+      audio.play().then(function () {
+        mic.lastFix = Date.now();
+        clearHist();
+        state.textContent = 'Поймал начало, слушаю';
+        say('Поймал начало, поехали');
+      }).catch(function () {});
+    }
+
+    // каждые полсекунды — снимок: идёт ли речь в комнате и где стоит дорожка
+    mic.si += 100;
+    if (mic.si >= 500) {
+      mic.si = 0;
+      if (!audio.paused && !audio.ended) {
+        mic.hist.push({ ct: audio.currentTime, bit: loud ? 1 : 0 });
+        if (mic.hist.length > 240) mic.hist.shift();
+      }
+    }
+
+    if (mic.ref && !audio.paused && mic.hist.length >= 60 && Date.now() - mic.lastFix > 20000) {
+      alignBySpeech();
+    }
+
+    setTimeout(tickLoop, 100);
+  }
+
+  function unlockAudio() {
+    // Разрешение на звук даётся по касанию: коротко проигрываем дорожку в тишине.
+    try {
+      audio.muted = true;
+      audio.play().then(function () {
+        if (mic.armed && audio.currentTime < 0.2) {
+          audio.pause();
+          audio.currentTime = 0;
+        }
+        audio.muted = false;
+      }).catch(function () { audio.muted = false; });
+    } catch (e) { audio.muted = false; }
+  }
+
+  document.getElementById('listen').addEventListener('click', function () {
+    if (mic.on) { stopListen(); return; }
+    unlockAudio();
+    startListen();
+  });
+
+  var mic = {
+    on: false, ctx: null, analyser: null, buf: null, stream: null, ref: null, ep: null,
+    loud: false, quietMs: 0, loudMs: 0, onsets: [], lastFix: 0, armed: false, paused: false,
+    lv: [], startedAt: 0, hist: [], si: 0, offset: 0
+  };
+
+  function nudge(d) {
+    var dur = audio.duration || 1e9;
+    audio.currentTime = Math.max(0, Math.min(dur - 1, audio.currentTime + d));
+    clearHist();
+    mic.lastFix = Date.now() + 8000;
+    state.textContent = 'Сдвиг вручную ' + (d > 0 ? '+' : '−') + Math.abs(d) + ' с';
+    say((d > 0 ? 'Вперёд' : 'Назад') + ' на ' + Math.abs(d) + ' секунд');
+  }
+
+  ['back5', 'back1', 'fwd1', 'fwd5'].forEach(function (id) {
+    var d = { back5: -5, back1: -1, fwd1: 1, fwd5: 5 }[id];
+    document.getElementById(id).addEventListener('click', function () { nudge(d); });
+  });
+
+  loadBlob().then(function (rec) {
+    if (!rec) return;
+    var blob = rec.blob || rec;
+    attach(URL.createObjectURL(blob));
+    if (rec.name) { mic.ep = epFromName(rec.name); fileName.textContent = rec.name; }
+    state.textContent = 'Дорожка на месте';
+  }).catch(function () {});
+
+  if ('serviceWorker' in navigator) {
+    navigator.serviceWorker.register('sw.js').catch(function () {});
+  }
+})();
+</script>
+</body>
+</html>

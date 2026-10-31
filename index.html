@@ -145,7 +145,7 @@
 
   <button id="listen" class="primary" style="margin-top:12px;width:100%;min-height:110px" type="button" aria-pressed="false">
     <span class="big" id="listenLabel">Слушать фильм</span>
-    <span class="sub" id="listenSub">найду начало сам</span>
+    <span class="sub" id="listenSub">фильм начни с самого начала</span>
   </button>
 
   <div style="display:flex;gap:8px;margin-top:10px">
@@ -390,49 +390,9 @@
     mic.stream = null; mic.ctx = null; mic.analyser = null;
     document.getElementById('listen').setAttribute('aria-pressed', 'false');
     document.getElementById('listenLabel').textContent = 'Слушать фильм';
-    document.getElementById('listenSub').textContent = 'найду начало сам';
+    document.getElementById('listenSub').textContent = 'фильм начни с самого начала';
     state.textContent = 'Слушание выключено';
     say('Слушание выключено');
-  }
-
-  // Сверяем ритм речи в комнате с картой речи из субтитров: ищем сдвиг,
-  // при котором совпадений «речь/тишина» больше всего.
-  function alignBySpeech() {
-    var ref = mic.ref && mic.ref.speech;
-    if (!ref) return;
-    var hist = mic.hist.filter(function (h) { return h.ct > audio.currentTime - 45; });
-    if (hist.length < 40) return;
-    var ones = 0;
-    hist.forEach(function (h) { ones += h.bit; });
-    if (ones < 8) return;
-
-    var STEP = 0.5, all = [];
-    for (var d = -150; d <= 150; d += 0.5) {
-      var score = 0, n = 0;
-      for (var i = 0; i < hist.length; i++) {
-        var k = Math.round((hist[i].ct + d) / STEP);
-        if (k < 0 || k >= ref.length) continue;
-        var r = ref.charCodeAt(k) === 49 ? 1 : 0;
-        n++;
-        if (r === 1 && hist[i].bit === 1) score += 3;
-        else if (r === 0 && hist[i].bit === 0) score += 1;
-      }
-      if (n >= 30) all.push({ d: d, score: score });
-    }
-    if (!all.length) return;
-    all.sort(function (a, b) { return b.score - a.score; });
-    var best = all[0], alt = 0;
-    for (var j = 1; j < all.length; j++) {
-      if (Math.abs(all[j].d - best.d) > 3) { alt = all[j].score; break; }
-    }
-    if (alt && best.score < alt * 1.1) return;
-    mic.offset = best.d;
-    mic.lastFix = Date.now();
-    if (Math.abs(best.d) < 0.7) return;
-    var dur = audio.duration || 1e9;
-    audio.currentTime = Math.max(0, Math.min(dur - 1, audio.currentTime + best.d));
-    clearHist();
-    state.textContent = 'Сдвиг ' + (best.d > 0 ? '+' : '−') + Math.abs(Math.round(best.d)) + ' с';
   }
 
   function clearHist() { mic.hist = []; }
@@ -461,7 +421,7 @@
     }
     mic.loud = loud;
 
-    if (mic.armed && loud && mic.loudMs >= 700 && audio.paused && Date.now() - mic.startedAt < 300000) {
+    if (mic.armed && loud && mic.loudMs >= 1200 && audio.paused && Date.now() - mic.startedAt < 300000) {
       mic.armed = false;
       try { audio.currentTime = 0; } catch (e) {}
       audio.play().then(function () {
@@ -470,20 +430,6 @@
         state.textContent = 'Поймал начало, слушаю';
         say('Поймал начало, поехали');
       }).catch(function () {});
-    }
-
-    // каждые полсекунды — снимок: идёт ли речь в комнате и где стоит дорожка
-    mic.si += 100;
-    if (mic.si >= 500) {
-      mic.si = 0;
-      if (!audio.paused && !audio.ended) {
-        mic.hist.push({ ct: audio.currentTime, bit: loud ? 1 : 0 });
-        if (mic.hist.length > 240) mic.hist.shift();
-      }
-    }
-
-    if (mic.ref && !audio.paused && mic.hist.length >= 60 && Date.now() - mic.lastFix > 20000) {
-      alignBySpeech();
     }
 
     setTimeout(tickLoop, 100);
