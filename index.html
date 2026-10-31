@@ -142,6 +142,11 @@
       <span class="sub">три коротких сигнала</span>
     </button>
   </div>
+
+  <button id="listen" class="primary" style="margin-top:12px;width:100%;min-height:110px" type="button" aria-pressed="false">
+    <span class="big" id="listenLabel">Слушать фильм</span>
+    <span class="sub" id="listenSub">найду начало сам</span>
+  </button>
 </main>
 
 <div id="live" aria-live="polite" role="status"></div>
@@ -223,7 +228,9 @@
     var url = URL.createObjectURL(file);
     attach(url);
     fileName.textContent = file.name || '';
-    saveBlob(file).catch(function () { /* не страшно: файл играет и так */ });
+    mic.ep = epFromName(file.name);
+    mic.ref = null;
+    saveBlob({ blob: file, name: file.name || '' }).catch(function () { /* не страшно: файл играет и так */ });
     say('Дорожка загружена');
   }
 
@@ -312,11 +319,171 @@
     if (e.code === 'ArrowRight') { e.preventDefault(); nudge(e.shiftKey ? 10 : 1); }
   });
 
-  loadBlob().then(function (blob) {
-    if (blob) {
-      attach(URL.createObjectURL(blob));
-      state.textContent = 'Дорожка на месте';
+  // ---- Слушание фильма: автостарт и подгонка по ритму речи ----
+
+  function epFromName(name) {
+    var m = /s(\d{1,2})e(\d{1,2})/i.exec(name || '');
+    return m ? ('s' + ('0' + m[1]).slice(-2) + 'e' + ('0' + m[2]).slice(-2)) : null;
+  }
+
+  function pct(arr, p) {
+    if (!arr.length) return 0;
+    var a = arr.slice().sort(function (x, y) { return x - y; });
+    return a[Math.min(a.length - 1, Math.floor(a.length * p))];
+  }
+
+  function loadRef() {
+    if (mic.ref || !mic.ep) return;
+    fetch('timing/' + mic.ep + '.json', { cache: 'no-cache' })
+      .then(function (r) { return r.ok ? r.json() : null; })
+      .then(function (j) { if (j && j.onsets) mic.ref = j; })
+      .catch(function () {});
+  }
+
+  function startListen() {
+    if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
+      state.textContent = 'Микрофон недоступен';
+      say('Микрофон недоступен');
+      return;
     }
+    navigator.mediaDevices.getUserMedia({
+      audio: { echoCancellation: true, noiseSuppression: false, autoGainControl: true }
+    }).then(function (stream) {
+      mic.stream = stream;
+      var Ctx = window.AudioContext || window.webkitAudioContext;
+      mic.ctx = new Ctx();
+      var src = mic.ctx.createMediaStreamSource(stream);
+      mic.analyser = mic.ctx.createAnalyser();
+      mic.analyser.fftSize = 2048;
+      src.connect(mic.analyser);
+      mic.buf = new Float32Array(mic.analyser.fftSize);
+      mic.on = true; mic.armed = true; mic.paused = false;
+      mic.onsets = []; mic.lv = []; mic.loud = false;
+      mic.quietMs = 0; mic.loudMs = 0; mic.lastFix = Date.now();
+      mic.startedAt = Date.now();
+      mic.ref = null;
+      document.getElementById('listen').setAttribute('aria-pressed', 'true');
+      document.getElementById('listenLabel').textContent = 'Слушаю';
+      document.getElementById('listenSub').textContent = 'включи фильм';
+      state.textContent = 'Слушаю планшет';
+      loadRef();
+      say('Слушаю. Включай фильм.');
+      tickLoop();
+    }).catch(function () {
+      state.textContent = 'Нет доступа к микрофону';
+      say('Нет доступа к микрофону');
+    });
+  }
+
+  function stopListen() {
+    mic.on = false; mic.armed = false; mic.paused = false;
+    if (mic.stream) mic.stream.getTracks().forEach(function (t) { t.stop(); });
+    if (mic.ctx) { try { mic.ctx.close(); } catch (e) {} }
+    mic.stream = null; mic.ctx = null; mic.analyser = null;
+    document.getElementById('listen').setAttribute('aria-pressed', 'false');
+    document.getElementById('listenLabel').textContent = 'Слушать фильм';
+    document.getElementById('listenSub').textContent = 'найду начало сам';
+    state.textContent = 'Слушание выключено';
+    say('Слушание выключено');
+  }
+
+  function tryFix() {
+    var now = Date.now();
+    var recent = mic.onsets.filter(function (o) { return now - o.at < 45000; });
+    if (recent.length < 4) return;
+    var bins = {};
+    recent.forEach(function (l) {
+      mic.ref.onsets.forEach(function (r) {
+        var d = r - l.t;
+        if (Math.abs(d) > 1200) return;
+        var k = Math.round(d * 2) / 2;
+        (bins[k] = bins[k] || []).push(d);
+      });
+    });
+    var best = null;
+    Object.keys(bins).forEach(function (k) {
+      if (!best || bins[k].length > best.v.length) best = { v: bins[k] };
+    });
+    if (!best || best.v.length < 4) return;
+    var sorted = best.v.slice().sort(function (a, b) { return a - b; });
+    var med = sorted[sorted.length >> 1];
+    mic.lastFix = now;
+    if (Math.abs(med) < 0.9) return;
+    var d = audio.duration || 1e9;
+    audio.currentTime = Math.max(0, Math.min(d, audio.currentTime + med));
+    state.textContent = 'Подтянул на ' + Math.round(Math.abs(med)) + ' с';
+    say('Подтянул на ' + Math.round(Math.abs(med)) + ' секунд');
+  }
+
+  function tickLoop() {
+    if (!mic.on) return;
+    mic.analyser.getFloatTimeDomainData(mic.buf);
+    var sum = 0, i;
+    for (i = 0; i < mic.buf.length; i++) { sum += mic.buf[i] * mic.buf[i]; }
+    var rms = Math.sqrt(sum / mic.buf.length);
+    mic.lv.push(rms);
+    if (mic.lv.length > 200) mic.lv.shift();
+    var thr = Math.max(0.004, Math.min(0.05, pct(mic.lv, 0.2) * 3 + 0.003));
+    var loud = rms > thr;
+
+    if (loud) {
+      if (!mic.loud && mic.quietMs >= 350 && mic.lv.length > 20) {
+        mic.onsets.push({ t: audio.currentTime, at: Date.now() });
+        if (mic.onsets.length > 24) mic.onsets.shift();
+      }
+      mic.loudMs += 100;
+      mic.quietMs = 0;
+    } else {
+      mic.quietMs += 100;
+      mic.loudMs = 0;
+    }
+    mic.loud = loud;
+
+    if (mic.armed && loud && mic.loudMs >= 700 && audio.paused && Date.now() - mic.startedAt < 300000) {
+      mic.armed = false;
+      try { audio.currentTime = 0; } catch (e) {}
+      audio.play().then(function () {
+        mic.lastFix = Date.now();
+        state.textContent = 'Синхронизировано';
+        say('Поймал начало, поехали');
+      }).catch(function () {});
+    }
+
+    if (!audio.paused && !mic.armed && mic.quietMs > 5000 && rms < 0.004) {
+      audio.pause();
+      mic.paused = true;
+      state.textContent = 'Фильм встал, жду';
+    }
+    if (mic.paused && loud && mic.loudMs >= 400) {
+      mic.paused = false;
+      mic.lastFix = Date.now();
+      audio.play().catch(function () {});
+      state.textContent = 'Продолжаю';
+    }
+
+    if (mic.ref && !audio.paused && mic.onsets.length >= 4 && Date.now() - mic.lastFix > 8000) {
+      tryFix();
+    }
+
+    setTimeout(tickLoop, 100);
+  }
+
+  document.getElementById('listen').addEventListener('click', function () {
+    if (mic.on) stopListen(); else startListen();
+  });
+
+  var mic = {
+    on: false, ctx: null, analyser: null, buf: null, stream: null, ref: null, ep: null,
+    loud: false, quietMs: 0, loudMs: 0, onsets: [], lastFix: 0, armed: false, paused: false,
+    lv: [], startedAt: 0
+  };
+
+  loadBlob().then(function (rec) {
+    if (!rec) return;
+    var blob = rec.blob || rec;
+    attach(URL.createObjectURL(blob));
+    if (rec.name) { mic.ep = epFromName(rec.name); fileName.textContent = rec.name; }
+    state.textContent = 'Дорожка на месте';
   }).catch(function () {});
 
   if ('serviceWorker' in navigator) {
