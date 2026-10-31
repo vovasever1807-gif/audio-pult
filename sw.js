@@ -1,4 +1,4 @@
-var CACHE = 'pult-v6';
+var CACHE = 'pult-v7';
 var FILES = ['./', './manifest.json'];
 
 self.addEventListener('install', function (e) {
