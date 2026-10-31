@@ -468,8 +468,24 @@
     setTimeout(tickLoop, 100);
   }
 
+  function unlockAudio() {
+    // Разрешение на звук даётся по касанию: коротко проигрываем дорожку в тишине.
+    try {
+      audio.muted = true;
+      audio.play().then(function () {
+        if (mic.armed && audio.currentTime < 0.2) {
+          audio.pause();
+          audio.currentTime = 0;
+        }
+        audio.muted = false;
+      }).catch(function () { audio.muted = false; });
+    } catch (e) { audio.muted = false; }
+  }
+
   document.getElementById('listen').addEventListener('click', function () {
-    if (mic.on) stopListen(); else startListen();
+    if (mic.on) { stopListen(); return; }
+    unlockAudio();
+    startListen();
   });
 
   var mic = {
